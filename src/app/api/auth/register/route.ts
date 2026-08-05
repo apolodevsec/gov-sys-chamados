@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient } from '@/utils/supabase/server';
+import { createAdminClient } from '@/utils/supabase/admin';
 
 const registerSchema = z.object({
   email: z.string().email('Email inválido'),
@@ -23,25 +24,42 @@ export async function POST(request: Request) {
     }
 
     const { email, password, name, cpf, phone } = parsed.data;
-    const supabase = await createClient();
 
-    const { data, error } = await supabase.auth.signUp({
+    const adminClient = createAdminClient();
+    
+    const { data: adminData, error: adminError } = await adminClient.auth.admin.createUser({
       email,
       password,
-      options: {
-        data: {
-          name,
-          cpf,
-          phone
-        }
-      }
+      email_confirm: true,
+      user_metadata: {
+        name,
+        cpf,
+        phone,
+      },
     });
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    if (adminError) {
+      return NextResponse.json({ error: adminError.message }, { status: 400 });
     }
 
-    return NextResponse.json({ user: data.user }, { status: 201 });
+    // Após criar com o Admin, podemos logar o usuário para criar a sessão no cookie
+    const supabase = await createClient();
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (signInError) {
+      return NextResponse.json(
+        { error: 'Usuário criado, mas falhou ao logar', details: signInError.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json(
+      { message: 'Usuário registrado e logado com sucesso', user: adminData.user },
+      { status: 201 }
+    );
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Erro interno do servidor' }, { status: 500 });
   }
